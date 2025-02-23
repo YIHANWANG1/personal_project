@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>轨迹动画</title>
+    <script src='https://api.mapbox.com/mapbox-gl-js/v2.9.1/mapbox-gl.js'></script>
+    <link href='https://api.mapbox.com/mapbox-gl-js/v2.9.1/mapbox-gl.css' rel='stylesheet' />
+    <style>
+        #map { height: 800px; width: 100%; }
+        .control-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="control-panel">
+        <button onclick="startAnimation()">开始动画</button>
+        <button onclick="resetAnimation()">重置</button>
+        <input type="range" min="10" max="200" value="50" id="speedControl">
+        <span id="speedValue">50ms</span>
+    </div>
+
+    <script>
+        mapboxgl.accessToken = 'pk.eyJ1IjoieWloYW4yIiwiYSI6ImNtNWNoZm5rejRxdGYyanNkZ2dvazc1bGcifQ.RVw7Qp-m7RAnMdU8wqw-rg';
+        
+        let coordinates = [];
+        let currentLine = [];
+        let animationId;
+        let currentMarker;
+        let lastTimestamp = 0;
+        let speed = 50;
+
+        document.getElementById('speedControl').addEventListener('input', function(e) {
+            speed = parseInt(e.target.value);
+            document.getElementById('speedValue').textContent = speed + 'ms';
+        });
+
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/streets-v11',
+            center: [-0.189227, 51.608657],
+            zoom: 14,
+            antialias: true
+        });
+
+        map.on('load', async () => {
+            try {
+                // 从本地文件加载数据
+                const response = await fetch('/london_trajectories_pretty2.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                
+                // 获取第一条轨迹的坐标
+                coordinates = data[0].coordinates.split(';').map(coord => {
+                    const [lon, lat] = coord.split(':');
+                    return [parseFloat(lon), parseFloat(lat)];
+                });
+
+                console.log('成功加载轨迹点数：', coordinates.length);
+
+                // 添加路线图层
+                map.addSource('route', {
+                    'type': 'geojson',
+                    'data': {
+                        'type': 'Feature',
+                        'geometry': {
+                            'type': 'LineString',
+                            'coordinates': []
+                        }
+                    },
+                    'lineMetrics': true,
+                    'generateId': true
+                });
+
+                map.addLayer({
+                    'id': 'route',
+                    'type': 'line',
+                    'source': 'route',
+                    'layout': {
+                        'line-join': 'round',
+                        'line-cap': 'round'
+                    },
+                    'paint': {
+                        'line-color': '#FF0000',
+                        'line-width': 4,
+                        'line-opacity': 0.8
+                    }
+                });
+
+                // 创建移动标记
+                currentMarker = new mapboxgl.Marker({
+                    color: '#FF0000'
+                })
+                .setLngLat(coordinates[0])
+                .addTo(map);
+
+            } catch (error) {
+                console.error('加载数据失败:', error);
+                alert('加载数据失败，请确保文件路径正确且可访问');
+            }
+        });
+
+        function startAnimation() {
+            if (animationId) cancelAnimationFrame(animationId);
+            
+            let i = 0;
+            currentLine = [coordinates[0]];
+            lastTimestamp = 0;
+
+            function animate(timestamp) {
+                if (!lastTimestamp) lastTimestamp = timestamp;
+                
+                const elapsed = timestamp - lastTimestamp;
+
+                if (elapsed > speed) {
+                    if (i < coordinates.length - 1) {
+                        i++;
+                        currentLine.push(coordinates[i]);
+                        
+                        requestAnimationFrame(() => {
+                            // 更新路线
+                            map.getSource('route').setData({
+                                'type': 'Feature',
+                                'geometry': {
+                                    'type': 'LineString',
+                                    'coordinates': currentLine
+                                }
+                            });
+
+                            // 更新标记位置
+                            currentMarker.setLngLat(coordinates[i]);
+
+                            // 平滑移动地图视角
+                            map.easeTo({
+                                center: coordinates[i],
+                                zoom: 14,
+                                duration: speed,
+                                easing: (t) => t
+                            });
+                        });
+
+                        lastTimestamp = timestamp;
+                    }
+                }
+                
+                animationId = requestAnimationFrame(animate);
+            }
+
+            animate(performance.now());
+        }
+
+        function resetAnimation() {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            currentLine = [];
+            map.getSource('route').setData({
+                'type': 'Feature',
+                'geometry': {
+                    'type': 'LineString',
+                    'coordinates': []
+                }
+            });
+
+            // 重置标记位置到起点
+            currentMarker.setLngLat(coordinates[0]);
+
+            // 重置地图视角到起点
+            map.flyTo({
+                center: coordinates[0],
+                zoom: 14,
+                duration: 1000
+            });
+        }
+    </script>
+</body>
+</html>
